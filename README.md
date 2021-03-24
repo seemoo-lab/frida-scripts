@@ -16,3 +16,6 @@ larger closed-source projects.
   Almost everything is a Mach message on iOS, from Cross-Process Communication (XPC) to
   IOKit driver calls in the kernel. Might be a bit verbose, tunable via two parameters to
   truncate messages and skip XPC. Tested on iOS 13.3-14.4.
+
+* [iotracy.js](https://github.com/robre/frida-scripts) hooks IOKit.
+  External repo, not included here, by robre.
