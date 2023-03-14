@@ -3,7 +3,8 @@
  a process on iOS. For example, `dispatch_async(queue, block)` takes a dispatch queue
  with a name and a block that defines execution including a function.
 
- Since even our debug prints are threaded, prints can occur out of order.
+ Since even our debug prints are threaded, prints can occur out of order,
+ so we have to combine them into one logging statement.
  
  libdispatch is open-sourced by Apple: https://opensource.apple.com/tarballs/libdispatch/
 
@@ -27,99 +28,83 @@
 
 function print_block_invoke(dispatch_block) {
     // Is at offset 0x10. Only the least significant are relevant.
-    console.log('Callback function: ' + DebugSymbol.fromAddress(dispatch_block.add(0x10).readPointer()));
+    return `Callback function: ${DebugSymbol.fromAddress(dispatch_block.add(0x10).readPointer())}\n`;
 }
 
 // Get name of a queue
-var _dispatch_queue_get_label_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_queue_get_label');
-var _dispatch_queue_get_label = new NativeFunction(this._dispatch_queue_get_label_addr, "pointer", ["pointer"]);
+const _dispatch_queue_get_label_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_queue_get_label');
+const _dispatch_queue_get_label = new NativeFunction(_dispatch_queue_get_label_addr, "pointer", ["pointer"]);
 function print_queue_label(dispatch_queue) {
-    console.log('Calling queue: ' + _dispatch_queue_get_label(dispatch_queue).readUtf8String());
+    return `Calling queue: ${_dispatch_queue_get_label(dispatch_queue).readUtf8String()}\n`;
 }
 
 function print_backtrace(ctx) {
-        console.log('Backtrace:\n' +
-        Thread.backtrace(ctx, Backtracer.ACCURATE)
-        .map(DebugSymbol.fromAddress).join('\n') + '\n');
+        return 'Backtrace:\n' +
+            Thread.backtrace(ctx, Backtracer.ACCURATE)
+            .map(DebugSymbol.fromAddress).join('\n') + '\n';
 }
 
-/*
- Hook async dispatching. We do the backtrace in the thread *before* dispatch_async
- was called, so we're off by one.
-*/
-var _dispatch_async_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_async');
+// Hook async dispatching. We do the backtrace in the thread *before* dispatch_async
+// was called, so we're off by one.
+const _dispatch_async_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_async');
 Interceptor.attach(_dispatch_async_addr, {
-    onEnter: function() {
-        console.log('dispatch_async');
-        print_queue_label(this.context.x0);
-    	print_block_invoke(this.context.x1);
-    	print_backtrace(this.context);
+    onEnter: function(args) {
+        console.log('dispatch_async\n' +
+            print_queue_label(args[0]) +
+            print_block_invoke(args[1]) +
+            print_backtrace(this.context));
     },
 });
 
-/*
- Dispatching sync. Used a lot during service creation.
-*/
-var _dispatch_sync_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_sync');
+// Dispatching sync. Used a lot during service creation.
+const _dispatch_sync_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_sync');
 Interceptor.attach(_dispatch_sync_addr, {
-    onEnter: function() {
-        console.log('dispatch_sync');
-        print_queue_label(this.context.x0);
-    	print_block_invoke(this.context.x1);
-        print_backtrace(this.context);
+    onEnter: function(args) {
+        console.log('dispatch_sync\n' +
+            print_queue_label(args[0]) + 
+            print_block_invoke(args[1]) +
+            print_backtrace(this.context));
     },
 });
 
-/*
- Dispatch queue creation
-*/
-var _dispatch_queue_create_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_queue_create');
+// Dispatch queue creation
+const _dispatch_queue_create_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_queue_create');
 Interceptor.attach(_dispatch_queue_create_addr, {
-    onEnter: function() {
-        console.log('dispatch_queue_create');
-    	console.log('Label: ' + this.context.x0.readUtf8String());
-    	print_backtrace(this.context);
+    onEnter: function(args) {
+        console.log('dispatch_queue_create\n' +
+    	    'Label: ' + args[0].readUtf8String() + '\n' +
+    	    print_backtrace(this.context));;
     },
 });
 
-/*
- Hook time dispatching, but this only gives time constraints so it shouldn't be relevant for us.
-*/
-var _dispatch_time_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_time');
+// Hook time dispatching, but this only gives time constraints so it shouldn't be relevant for us.
+const _dispatch_time_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_time');
 Interceptor.attach(_dispatch_time_addr, {
-    onEnter: function() {
-        console.log('dispatch_time');
+    onEnter: function(args) {
+        console.log('dispatch_time\n');
     },
 });
 
-
-/*
- Dispatching after a given time. It's defined as 64bit ENUM with 0=now and max=forever,
- but depends on the *OS version. Results in a Frida error :(
-*/
-/*
-var _dispatch_after_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_after');
+// Delayed dispatching
+const _dispatch_after_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_after');
 Interceptor.attach(_dispatch_after_addr, {
-    onEnter: function(t, q, b) {
-        console.log('!!!!!!!!!!!!!! dispatch_after');
-        //console.log("Time: " + this.context.x0.readDouble());
-        //print_queue_label(this.context.x1);
-    	//print_block_invoke(this.context.x2);
-    	//print_backtrace(this.context);
+    onEnter: function(args) {
+        console.log('dispatch_after\n' +
+            //'in ' + args[0].readDouble() + 'ms' + 
+            print_queue_label(args[1]) + 
+            print_block_invoke(args[2]) +
+            print_backtrace(this.context));
     },
-});
-*/
+}); 
 
 /*
- Dispatching once. Results in a Frida error :(
-*/
-/*
-var _dispatch_once_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_once');
+// hooking this leads to freezing the target process, hence it's disabled...
+const _dispatch_once_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_once');
 Interceptor.attach(_dispatch_once_addr, {
-    onEnter: function(q, b) {
-        console.log('dispatch_once');
-    	//print_block_invoke(this.context.x1);
-        //print_backtrace(this.context);
+    onEnter: function(args) {
+        console.log('dispatch_once\n' +
+            print_block_invoke(args[1]) +
+            print_backtrace(this.context));
     },
 });
 */
