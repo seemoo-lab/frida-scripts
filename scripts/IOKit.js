@@ -11,6 +11,9 @@
 
 */
 
+// Print returned ports
+var debug_returns = false;
+
 // Allow to set mappings between Mach ports and
 // IOUserClients as retrieved via launching script
 var mappings = [];
@@ -194,10 +197,17 @@ function hookIt(fn) {
             log_call(name, args, arglist);
         },
         onLeave: function(retval) {
-            ret_call(name, retval);
+            ret_call(name, retval, arglist);
         }
     });
 }
+
+// global variables
+var output = 0;
+var outputCnt = 0;
+var outputStruct = 0;
+var outputStructCnt = 0;
+var masterPort = 0;
 
 function log_call(fname, args, arglist) {
     // Print function name as a header.
@@ -225,10 +235,11 @@ function log_call(fname, args, arglist) {
                 const nextItemName = nextItemType.pop();
                 const nextItemVal = args[i+1];
 
+                // parse input and inputStruct etc.:
                 // Check if the length is
                 // also given and if so, we can
                 // safely dereference the pointer.
-                if (nextItemName == name_without_star+'Cnt') {
+                if (nextItemName == name_without_star+'Cnt' && !name.includes('output')) {
                     console.log(s);
                     console.log(value.readByteArray(parseInt(nextItemVal)));
                     continue;
@@ -247,7 +258,29 @@ function log_call(fname, args, arglist) {
 
             // https://opensource.apple.com/source/xnu/xnu-201/osfmk/ipc/ipc_port.h.auto.html
             // struct ipc_port { ... }
-            if (type == 'mach_port_t') {
+
+            // outputStruct + Cnt
+            if (name == '*outputStruct') {
+                outputStruct = value;
+                continue;
+            }
+            else if (name == '*outputStructCnt') {
+                outputStructCnt = value;
+                continue;
+            }
+            else if (name == '*output') {
+                output = value;
+                continue;
+            }
+            else if (name == '*outputCnt') {
+                outputCnt = value;
+                continue;
+            }
+            else if (name == '*masterPort') {
+                masterPort = value;
+                continue;
+            }
+            else if (type == 'mach_port_t') {
                 console.log(s + value);
                 continue;
             }
@@ -273,7 +306,6 @@ function log_call(fname, args, arglist) {
                     console.log(machport + ' ==> ' + mapping[1]);
                 }
                 
-                
                 console.log('\t>> mach_port_t msgh_local_port: 0x' + value.add(12).readU32().toString(16).padStart(8,'0'));
                 console.log('\t>> mach_msg_size_t msgh_reserved: 0x' + value.add(16).readU32().toString(16).padStart(8,'0'));
                 console.log('\t>> mach_msg_id_t msgh_id: 0x' + value.add(20).readU32().toString(16).padStart(8,'0'));
@@ -285,67 +317,32 @@ function log_call(fname, args, arglist) {
             // }
         }
         // non-pointer (*) types
-        else if (type == 'mach_port_t') {
+        // print port names here (except from lookup pointer in MasterPort, which is the old one)
+        else if ((type == 'mach_port_t' || type == 'io_registry_entry_t' || type == 'io_object_t') && ! fname.includes('IOMasterPort')) {
             const mapping = mappings.find(function (el) { return el[0] == parseInt(value) });
             if (mapping != undefined && mapping[1] != undefined) {
                 console.log(s + value + ' => ' + mapping[1]);
-            }
-            else {
-                console.log(s + value);
+            } else {
+                // if we don't know the mapping, get it
+                let entry = parseInt(value);
+                mach_port_kobject_description(taskself, entry, kotype, kaddr, desc);
+                let desc_val = desc.readUtf8String();
+                mappings.push([entry, desc_val]);
+                console.log(s + value + ', added new mapping ' + desc_val);
             }
             continue;
         }
-        else if (type == 'CFStringRef') {
-            // - Debugging -
-            // for(var i=0;i<16;i++) {
-            //     console.log(hexdump(value.add(i*16).readPointer()));
-            // }
-
-            // console.log(hexdump(value));
-
-            // - From https://opensource.apple.com/source/CF/CF-476.18/CFString.c.auto.html -
-            // struct __CFString {
-            //     CFRuntimeBase base;
-            //     union { // In many cases the allocated structs are smaller than these
-            //         struct __inline1 {
-            //             CFIndex length;
-            //         } inline1;                                      // Bytes follow the length
-            //         struct __notInlineImmutable1 {
-            //             void *buffer;                               // Note that the buffer is in the same place for all non-inline variants of CFString
-            //             CFIndex length;                             
-            //             CFAllocatorRef contentsDeallocator;     // Optional; just the dealloc func is used
-            //         } notInlineImmutable1;                          // This is the usual not-inline immutable CFString
-            //         struct __notInlineImmutable2 {
-            //             void *buffer;
-            //             CFAllocatorRef contentsDeallocator;     // Optional; just the dealloc func is used
-            //         } notInlineImmutable2;                          // This is the not-inline immutable CFString when length is stored with the contents (first byte)
-            //         struct __notInlineMutable notInlineMutable;
-            //     } variants;
-            // };
-
-            // typedef struct __CFRuntimeBase {
-            //     uintptr_t _cfisa;
-            //     uint8_t _cfinfo[4];
-            // #if __LP64__
-            //     uint32_t _rc;
-            // #endif
-            // } CFRuntimeBase;
-
-            // typedef long CFIndex;
-
-            // This means the 2 string buffers are at the pointers
-            // sitting at base address + 16 and base address + 48.
-
-            const cfstring_base = new NativePointer(value);
-            const buffer1 = value.add(16).readPointer().readUtf8String();
-            const buffer2 = value.add(48).readPointer().readUtf8String();
-            console.log(s + buffer1);
+        else if (type.includes('CFStringRef')) {
+            console.log(s + new ObjC.Object(value));
             continue;
         }
         else if (type.includes('CFDictionaryRef')) {
             // Frida can handle CFDictionaries natively as Objective-C objects
-            const cfdict = new NativePointer(value);
             console.log(s + cfdict + '\nDict: \n' + new ObjC.Object(value));
+            continue;
+        }
+        else if (type.includes('io_string_t')) {
+            console.log(s + value.readUtf8String());
             continue;
         }
 
@@ -356,16 +353,53 @@ function log_call(fname, args, arglist) {
     // print a newline at the end
     console.log('');
 
+
 }
 
-function ret_call(fname, retval) {
+function ret_call(fname, retval, arglist) {
 
-    // print the mach port that the service is going to use
-    if (fname.includes('IOIteratorNext')) {
-        if (retval != 0x0) {
-            console.log('< io_service_t ' + retval + '\n');
+
+    // print the outputs, only filled on return
+    if (arglist.includes('void *outputStruct')) {  // size_t
+        if (outputStructCnt != 0x0) {
+            let size = outputStructCnt.readU32(); //U64?
+            console.log('< outputStruct: \n' + hexdump(outputStruct.readByteArray(size)) + '\n');
         }
     }
+    if (arglist.includes('uint64_t *output')) {  // size_t
+        let size = parseInt(outputCnt);
+        if (size != 0) {
+            console.log('< output: \n' + hexdump(output.readByteArray(size)) + '\n');
+        }
+    }
+
+    if (debug_returns) {
+        console.log('debugging returns!')
+        // print the mach port that the service is going to use
+        if (fname.includes('IOIteratorNext')) {
+            if (retval != 0x0) {
+                console.log('< io_service_t ' + retval + '\n');
+            }
+        }
+    
+        // print the mach port that the service is going to use,
+        // also push it to the service map
+        if (fname.includes('IORegistryEntryFromPath')) {
+            if (retval != 0x0) {
+                let entry = parseInt(retval);
+                mach_port_kobject_description(taskself, entry, kotype, kaddr, desc);
+                let desc_val = desc.readUtf8String();
+                console.log('< io_registry_entry_t ' + retval + ', port description: ' + desc_val +  '\n');
+                mappings.push([entry, desc_val]);
+            }
+        }
+
+        // IOMasterPort - save it for lookup
+        if (arglist.includes('mach_port_t *masterPort')) {
+            console.log('< masterPort: ' + new NativePointer(masterPort.readU32()) + '\n'); //cast to nativeptr for hex
+        }
+    }
+
 }
 
 // var addr_mach = Module.getExportByName('libSystem.B.dylib', 'mach_msg');
