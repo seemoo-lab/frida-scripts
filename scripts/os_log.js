@@ -9,14 +9,10 @@ Interceptor.attach(isEnabledFunc, {
 // generic function to print log args
 const NSString = ObjC.classes.NSString;
 function printLog(args) {
-    let type = args[2]; 
+    //let type = args[2]; 
     let format = args[3].readCString();
     let buffer = args[4];
-    //let num_args = buffer.add(1).readU8();  // as specified by format instead of string
-    //console.log(buffer.readByteArray(0x40));
-    let num_args = (format.match(/%({.*?})?.*?([@dDuUxXoOfeEgGcCsSpaAF])/g) || []).length; // number of args as counted in string
-    //console.log('% in string ' + num_args_string + ' vs number in buffer ' + num_args);
-    // TODO number different on format string '%.*P'
+    let num_args = buffer.add(1).readU8();  // as specified by format buffer
 
     if (num_args == 0) {
         return format;
@@ -34,58 +30,70 @@ function printLog(args) {
     */
 
 
+    // Most of this is a normal format string but there's '%.*P' and that one has two entries.
+    // It represents a buffer of bytes to be printed, so it's a pointer and a length.
+
     // can't use the format string as is due to stuff like "%{private}s", "%{bluetooth:OI_STATUS}u", etc.
     format = format.replaceAll(/%({.*?})/g, '%');
     //console.log('format string simplified: ' + format);
     
     // list from https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFStrings/formatSpecifiers.html#//apple_ref/doc/uid/TP40004265
     // while we could call into NSString.stringWithFormat_, Frida doesn't like varargs with vartypes here
-    let format_string_parts = format.match(/%({.*?})?.*?([@dDuUxXoOfeEgGcCsSpaAF])/g)
+    let format_string_parts = format.match(/%({.*?})?.*?([@dDuUxXoOfeEgGcCsSpaAFP])/g)
     if (format_string_parts == null) {
         return format;
     }
     let count = 0;
-    let format_string_values = [];
     let offset = 2;
+    //console.log(format);
+    //console.log(format_string_parts);
     format_string_parts.forEach((variable) => {
         //console.log(variable);
-        
+
         // the buffer starts with two bytes meta information (2nd is num of args)
         // each entry has: [1b type] [1b length - 4 or 8] [entry value]
-        let type = buffer.add(offset).readU8();
+        //let type = buffer.add(offset).readU8();
         //console.log('type: 0x' + type.toString(16));
         let l = buffer.add(offset + 1).readU8();
         //console.log('len: 0x' + l.toString(16));
 
         // 8 byte types (typically pointers)
         if (l == 8) {
-            let pos = buffer.add(offset + 2).readPointer();
-            format_string_values[count] = pos;
+            let value = buffer.add(offset + 2).readPointer();
+            //console.log('value: ' + value);
             if (variable === '%s') {
-                format = format.replace(variable, pos.readCString());
+                format = format.replace(variable, value.readCString());
             } else if (variable === '%@') {
-                format = format.replace(variable, new ObjC.Object(pos));
+                format = format.replace(variable, new ObjC.Object(value));
             } else {
-                format = format.replace(variable, pos);  // print pointer for remaining types
+                format = format.replace(variable, value);  // print pointer for remaining types
             }
         } else if (l == 4) {
-            let pos = buffer.add(offset + 2).readU32();
-            format_string_values[count] = pos;
-            if (variable === '%x' || variable === '%X') {
-                format = format.replace(variable, pos.toString(16));  // preserve hex strings
+            let value = buffer.add(offset + 2).readU32();
+            //console.log('value: ' + value);
+
+            if (/%.*P/.test(variable)) {
+                // can be %.*P for arbitrary buffer length or e.g. %.6P for a 6-byte buffer
+
+                // %.*P is a special case: contains a 4-byte length and an 8-byte pointer.
+                // we already read the length to value and now have to read that pointer.
+                // even if there's %.6P there's duplicate length information!
+                
+                let p = buffer.add(offset + 2 + 4 + 2).readPointer();
+                format = format.replace(variable, hexdump(p, {length: value, header: false, ansi: false}));
+                offset += 8 + 2;  // adjust for the pointer that we just read 
+            } 
+            else if (/[xX]/.test(variable)) {  // print hex as hex, but ignore padding
+                format = format.replace(variable, value.toString(16));  // preserve hex strings
             } else {
-                format = format.replace(variable, pos);
+                format = format.replace(variable, value);
             }
         } else {
             console.warn('!!!!!!!!!!!! unknown length!!!!!!! ' + l);
-            format_string_values[count] = new NativePointer(0x0);  //TODO
         }
         offset += l + 2;
         count++;
     });
-
-    //console.log('format string values: ')
-    //console.log(format_string_values);
 
     return format;
 }
@@ -110,7 +118,7 @@ Interceptor.attach(log_fault, {
 
 Interceptor.attach(log_debug, {
     onEnter: function (args) {
-        console.debug(printLog(args));
+        console.log("\x1b[34m" + printLog(args) + "\x1b[0m");  // print debug in blue
     },
 });
 
@@ -122,4 +130,4 @@ Interceptor.attach(log_error, {
 
 
 
-console.log('Printing log messages!');
+console.log('PRINT ALL THE LOGS! \\o/');
