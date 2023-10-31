@@ -1,22 +1,36 @@
 // Fake that all log types are enabled
-let isEnabledFunc = Module.findExportByName('libsystem_trace.dylib', 'os_log_type_enabled');
+const isEnabledFunc = Module.findExportByName('libsystem_trace.dylib', 'os_log_type_enabled');
 Interceptor.attach(isEnabledFunc, {
   onLeave: function (ret) {
     ret.replace(1);
   }
 });
 
-// generic function to print log args
+/*
+    Function that prints log args.
+    Similar to `os_log_impl_flatten_and_send`, which is a highly custom implementation.
+    It's *almost* like format strings. But all arguments are in one buffer with type and
+    length information, and there's a few more options than what's available for normal
+    format strings. So we can't just pass the arguments as a format string somewhere.
+
+    Also, not all functions there are exported and it's super chaotic, so parsing it on
+    our own seems to be the simpler solution.
+
+*/
 const NSString = ObjC.classes.NSString;
 function printLog(args) {
     //let type = args[2]; 
     let format = args[3].readCString();
     let buffer = args[4];
-    let num_args = buffer.add(1).readU8();  // as specified by format buffer
+    let num_args = buffer.add(1).readU8(); 
 
     if (num_args == 0) {
         return format;
     }
+
+
+    //console.log(format);
+    //console.log(buffer.readByteArray(0x50));
 
     /*
 
@@ -52,7 +66,7 @@ function printLog(args) {
 
         // the buffer starts with two bytes meta information (2nd is num of args)
         // each entry has: [1b type] [1b length - 4 or 8] [entry value]
-        //let type = buffer.add(offset).readU8();
+        let type = buffer.add(offset).readU8();
         //console.log('type: 0x' + type.toString(16));
         let l = buffer.add(offset + 1).readU8();
         //console.log('len: 0x' + l.toString(16));
@@ -61,10 +75,11 @@ function printLog(args) {
         if (l == 8) {
             let value = buffer.add(offset + 2).readPointer();
             //console.log('value: ' + value);
-            if (variable === '%s') {
+            if (variable === '%s' && value != 0 && type >> 4 == 2) { // types 0x20 and 0x22
                 format = format.replace(variable, value.readCString());
-            } else if (variable === '%@') {
-                format = format.replace(variable, new ObjC.Object(value));
+            } else if (variable === '%@' && value != 0 && type >> 4 == 4) { // types 0x40 and 0x42
+                let c = new ObjC.Object(value);
+                format = format.replace(variable, c.description());
             } else {
                 format = format.replace(variable, value);  // print pointer for remaining types
             }
@@ -72,7 +87,7 @@ function printLog(args) {
             let value = buffer.add(offset + 2).readU32();
             //console.log('value: ' + value);
 
-            if (/%.*P/.test(variable)) {
+            if (/%.*P/.test(variable) && value != 0) {
                 // can be %.*P for arbitrary buffer length or e.g. %.6P for a 6-byte buffer
 
                 // %.*P is a special case: contains a 4-byte length and an 8-byte pointer.
@@ -80,7 +95,9 @@ function printLog(args) {
                 // even if there's %.6P there's duplicate length information!
                 
                 let p = buffer.add(offset + 2 + 4 + 2).readPointer();
-                format = format.replace(variable, hexdump(p, {length: value, header: false, ansi: false}));
+                if (p != 0) {
+                    format = format.replace(variable, hexdump(p, {length: value, header: false, ansi: false}));
+                }
                 offset += 8 + 2;  // adjust for the pointer that we just read 
             } 
             else if (/[xX]/.test(variable)) {  // print hex as hex, but ignore padding
@@ -88,7 +105,12 @@ function printLog(args) {
             } else {
                 format = format.replace(variable, value);
             }
-        } else {
+        } else if (l == 1) {
+            let value = buffer.add(offset + 2).readU8();
+            console.log('value: ' + value);
+            format = format.replace(variable, value);
+
+        }else {
             console.warn('!!!!!!!!!!!! unknown length!!!!!!! ' + l);
         }
         offset += l + 2;
@@ -126,6 +148,13 @@ Interceptor.attach(log_error, {
     onEnter: function (args) {
         console.error(printLog(args));
     },
+});
+
+// don't crash...
+Process.setExceptionHandler(function(exp) {
+    console.warn(JSON.stringify(Object.assign(exp, { _lr: DebugSymbol.fromAddress(exp.context.lr), _pc: DebugSymbol.fromAddress(exp.context.pc) }), null, 2));
+    Memory.protect(exp.memory.address, Process.pointerSize, 'rw-');
+    return true; // goto PC 
 });
 
 
