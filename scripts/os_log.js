@@ -80,7 +80,9 @@ function printLog(args) {
     // Mostly normal format strings that we can match now, item by item.
     // In our case it's easier to iterate through the format string, as the raw buffer sometimes has
     // composed values that we want to combine and then replace one format string value with it.
-    let formatStringItems = StringArg.match(/%({.*?})?.*?([@dDuUxXoOfeEgGcCsSpaAFP])/g)
+    // There are some length modifiers (see FormatString.h) and more, let's just assume all chars are
+    // valid format string modifiers for simplicity.
+    let formatStringItems = StringArg.match(/%({.*?})?.*?([@a-zA-Z])/g)
     if (formatStringItems == null) {
         return StringArg;
     }
