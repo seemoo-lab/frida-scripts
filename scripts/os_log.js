@@ -1,10 +1,4 @@
-// Fake that all log types are enabled
-const isEnabledFunc = Module.findExportByName('libsystem_trace.dylib', 'os_log_type_enabled');
-Interceptor.attach(isEnabledFunc, {
-  onLeave: function (ret) {
-    ret.replace(1);
-  }
-});
+
 
 /*
     Function that prints OS Log args.
@@ -36,20 +30,22 @@ Interceptor.attach(isEnabledFunc, {
              3 PointerKind
              4 ObjCObjKind
         4 Bits Public/Private (lower nibble), we ignore this to print them all
-             0 Undefined
-             1 IsPrivate
-             2 IsPublic
 
     As defined in HandlePrintfSpecifier, each of these has different cases to handle:
          * "%f", "%d"... scalar and can be 4 bytes or even 1 bytes -- everything else is 8 bytes
          * "%s" pointer to null-terminated string
          * "%.*s" strlen (arg), pointer to string
-         * "%.16s" strlen (non-arg), pointer to string       -- TODO I think this is currently not handled here
+         * "%.16s" strlen (non-arg), pointer to string
          * "%.*P" len (arg), pointer to data
          * "%.16P" len (non-arg), pointer to data
          * "%@" pointer to objc object
+    
+    There are a lot of types to handle, including length modifiers etc. in these format strings.
+    We mostly care about printing the numbers at all, it's a bit quick&dirty. Handling them all
+    might take too much time.
 
 */
+
 const kind = {
     ScalarKind: 0,
     CountKind: 1,
@@ -74,15 +70,15 @@ function printLog(args) {
     }
 
     // Can't use the format string as is due to stuff like "%{private}s", "%{bluetooth:OI_STATUS}u", etc.
-    // Quick & dirty replace of types in {}...
+    // Just replace everything in {} as we ignore public/private.
     StringArg = StringArg.replaceAll(/%({.*?})/g, '%');
     
     // Mostly normal format strings that we can match now, item by item.
     // In our case it's easier to iterate through the format string, as the raw buffer sometimes has
     // composed values that we want to combine and then replace one format string value with it.
-    // There are some length modifiers (see FormatString.h) and more, let's just assume all chars are
-    // valid format string modifiers for simplicity.
-    let formatStringItems = StringArg.match(/%({.*?})?.*?([@a-zA-Z])/g)
+    // For simplicity, we assume any characters are valid length modifiers (see FormatString.h).
+    // We consider all conversion modifiers (see PrintfFormatString.cpp).
+    let formatStringItems = StringArg.match(/%({.*?})?.*?([%AEFGXacdefginopsuxCSP@mbryDOUZ])/g)
     if (formatStringItems == null) {
         return StringArg;
     }
@@ -130,8 +126,6 @@ function printLog(args) {
                     StringArg = StringArg.replace(variable, hexdump(pointerValue, {length: value, header: false, ansi: false}));
                 } else if (pointsToKind == kind.StringKind) {
                     StringArg = StringArg.replace(variable, pointerValue.readCString(value));
-                } else {
-                    console.error('LOG ERROR CounterKind with unknown pointer type ' + pointsToKind);
                 }
             } else {
                 StringArg = StringArg.replace(variable, 'null');
@@ -163,16 +157,23 @@ function printLog(args) {
                 StringArg = StringArg.replace(variable, realValue);
                 bufferOffset += 4 + 2;  // advance buffer
             }
+            // signed integers
+            else if (variable === '%d' || variable === '%i') {
+                StringArg = StringArg.replace(variable, (value << 32) >> 32);
+            }
             else {
                 StringArg = StringArg.replace(variable, value);
             }
-        } else {
-            console.warn(`LOG ERROR Item parser: Unhandled object length ${argSize}!`);
+
+            // TODO readability would be improved by adding further special cases here,
+            // such as %f etc. or even considering length modifiers
+
         }
         bufferOffset += argSize + 2;    // advance offset by item description + length
         itemCount++;
     });
 
+    // Debugging in case there's some unsupported types
     if (bufferOffset != BufLen) {
         console.error(`LOG ERROR buffer offset ${bufferOffset} does not match provided buffer length ${BufLen}!`);
         console.error(BufAddr.readByteArray(BufLen));
@@ -183,7 +184,15 @@ function printLog(args) {
     return StringArg;
 }
 
-// Hook all log types and print them in different colors
+// Fake that all log types are enabled
+const isEnabledFunc = Module.findExportByName('libsystem_trace.dylib', 'os_log_type_enabled');
+Interceptor.attach(isEnabledFunc, {
+  onLeave: function (ret) {
+    ret.replace(1);
+  }
+});
+
+// Hook all log levels and print them in different colors
 const log_default = Module.findExportByName('libsystem_trace.dylib', '_os_log_impl')
 const log_fault = Module.findExportByName('libsystem_trace.dylib', '_os_log_fault_impl')
 const log_debug = Module.findExportByName('libsystem_trace.dylib', '_os_log_debug_impl')
