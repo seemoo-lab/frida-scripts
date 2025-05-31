@@ -25,10 +25,11 @@ var tree = Memory.alloc(16);
 var treeCount = Memory.alloc(16);
 
 // step 1: get addresses for kernel functions
-var addr_mach_task_self = Module.getExportByName('libsystem_kernel.dylib', 'mach_task_self');
-var addr_mach_port_space_info = Module.getExportByName('libsystem_kernel.dylib', 'mach_port_space_info');
-var addr_mach_port_kobject = Module.getExportByName('libsystem_kernel.dylib', 'mach_port_kobject');
-var addr_mach_port_kobject_description = Module.getExportByName('libsystem_kernel.dylib', 'mach_port_kobject_description');
+const libsystem_kernel = Process.getModuleByName('libsystem_kernel.dylib');
+var addr_mach_task_self = libsystem_kernel.getExportByName('mach_task_self');
+var addr_mach_port_space_info = libsystem_kernel.getExportByName('mach_port_space_info');
+var addr_mach_port_kobject = libsystem_kernel.getExportByName('mach_port_kobject');
+var addr_mach_port_kobject_description = libsystem_kernel.getExportByName('mach_port_kobject_description');
 
 // step 2: create NativeFunctions
 var mach_task_self = new NativeFunction(addr_mach_task_self, 'int', []);
@@ -191,7 +192,7 @@ function hookIt(fn) {
     // console.log('\n');
 
     // Create frida hook
-    var addr = Module.getExportByName('IOKit', name);
+    var addr = Process.getModuleByName('IOKit').getExportByName(name);
     Interceptor.attach(addr, {
         onEnter: function(args) {
             log_call(name, args, arglist);
