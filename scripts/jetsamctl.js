@@ -2,7 +2,7 @@
 // e.g., dasd:
 //   `frida -U dasd -l jetsamctl.js`
 
-const memorystatus_control_addr = Module.getExportByName('libsystem_kernel.dylib', 'memorystatus_control');
+const memorystatus_control_addr = Process.getModuleByName('libsystem_kernel.dylib').getExportByName('memorystatus_control');
 const memorystatus_control = new NativeFunction(memorystatus_control_addr, 'int', ['int', 'int', 'int', 'pointer', 'int']);
 const MEMORYSTATUS_CMD_SET_JETSAM_TASK_LIMIT = 6;
 

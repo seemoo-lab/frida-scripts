@@ -29,7 +29,7 @@ var mach_remove_xpc = false;
 
 
 
-var _mach_msg_addr = Module.getExportByName('libSystem.B.dylib', 'mach_msg');
+var _mach_msg_addr = Process.getModuleByName('libSystem.B.dylib').getExportByName('mach_msg');
 
 // Using some global variables here for onEnter vs. onLeave, works most of the time...
 var _mach_msg_body_ptr;

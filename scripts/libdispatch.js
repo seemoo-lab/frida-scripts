@@ -32,7 +32,8 @@ function print_block_invoke(dispatch_block) {
 }
 
 // Get name of a queue
-const _dispatch_queue_get_label_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_queue_get_label');
+const libdispatch = Process.getModuleByName('libdispatch.dylib');
+const _dispatch_queue_get_label_addr = libdispatch.getExportByName('dispatch_queue_get_label');
 const _dispatch_queue_get_label = new NativeFunction(_dispatch_queue_get_label_addr, "pointer", ["pointer"]);
 function print_queue_label(dispatch_queue) {
     return `Calling queue: ${_dispatch_queue_get_label(dispatch_queue).readUtf8String()}\n`;
@@ -46,7 +47,7 @@ function print_backtrace(ctx) {
 
 // Hook async dispatching. We do the backtrace in the thread *before* dispatch_async
 // was called, so we're off by one.
-const _dispatch_async_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_async');
+const _dispatch_async_addr = libdispatch.getExportByName('dispatch_async');
 Interceptor.attach(_dispatch_async_addr, {
     onEnter: function(args) {
         console.log('dispatch_async\n' +
@@ -57,7 +58,7 @@ Interceptor.attach(_dispatch_async_addr, {
 });
 
 // Dispatching sync. Used a lot during service creation.
-const _dispatch_sync_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_sync');
+const _dispatch_sync_addr = libdispatch.getExportByName('dispatch_sync');
 Interceptor.attach(_dispatch_sync_addr, {
     onEnter: function(args) {
         console.log('dispatch_sync\n' +
@@ -68,7 +69,7 @@ Interceptor.attach(_dispatch_sync_addr, {
 });
 
 // Dispatch queue creation
-const _dispatch_queue_create_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_queue_create');
+const _dispatch_queue_create_addr = libdispatch.getExportByName('dispatch_queue_create');
 Interceptor.attach(_dispatch_queue_create_addr, {
     onEnter: function(args) {
         console.log('dispatch_queue_create\n' +
@@ -78,7 +79,7 @@ Interceptor.attach(_dispatch_queue_create_addr, {
 });
 
 // Hook time dispatching, but this only gives time constraints so it shouldn't be relevant for us.
-const _dispatch_time_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_time');
+const _dispatch_time_addr = libdispatch.getExportByName('dispatch_time');
 Interceptor.attach(_dispatch_time_addr, {
     onEnter: function(args) {
         console.log('dispatch_time\n');
@@ -86,7 +87,7 @@ Interceptor.attach(_dispatch_time_addr, {
 });
 
 // Delayed dispatching
-const _dispatch_after_addr = Module.getExportByName('libdispatch.dylib', 'dispatch_after');
+const _dispatch_after_addr = libdispatch.getExportByName('dispatch_after');
 Interceptor.attach(_dispatch_after_addr, {
     onEnter: function(args) {
         console.log('dispatch_after\n' +

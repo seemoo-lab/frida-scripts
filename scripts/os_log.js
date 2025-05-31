@@ -1,5 +1,3 @@
-
-
 /*
     Function that prints OS Log args.
 
@@ -185,7 +183,8 @@ function printLog(args) {
 }
 
 // Fake that all log types are enabled
-const isEnabledFunc = Module.findExportByName('libsystem_trace.dylib', 'os_log_type_enabled');
+const libsystem_trace = Process.getModuleByName('libsystem_trace.dylib');
+const isEnabledFunc = libsystem_trace.getExportByName('os_log_type_enabled');
 Interceptor.attach(isEnabledFunc, {
   onLeave: function (ret) {
     ret.replace(1);
@@ -193,10 +192,10 @@ Interceptor.attach(isEnabledFunc, {
 });
 
 // Hook all log levels and print them in different colors
-const log_default = Module.findExportByName('libsystem_trace.dylib', '_os_log_impl')
-const log_fault = Module.findExportByName('libsystem_trace.dylib', '_os_log_fault_impl')
-const log_debug = Module.findExportByName('libsystem_trace.dylib', '_os_log_debug_impl')
-const log_error = Module.findExportByName('libsystem_trace.dylib', '_os_log_error_impl')
+const log_default = libsystem_trace.getExportByName('_os_log_impl')
+const log_fault = libsystem_trace.getExportByName('_os_log_fault_impl')
+const log_debug = libsystem_trace.getExportByName('_os_log_debug_impl')
+const log_error = libsystem_trace.getExportByName('_os_log_error_impl')
 
 Interceptor.attach(log_default, {
     onEnter: function (args) {

@@ -1,6 +1,6 @@
 console.log("loading");
 
-const f = Module.getExportByName(null, 'open');
+const f = Module.getGlobalExportByName('open');
 
 Interceptor.attach(f, {
     onEnter: function(args) {
